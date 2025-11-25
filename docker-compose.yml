@@ -1,0 +1,55 @@
+version: '3.8'
+
+services:
+  # Serviço do Banco de Dados
+  db:
+    # Usa o Dockerfile_DB que criamos
+    build:
+      context: .
+      dockerfile: dockerfile_db
+    container_name: wallet_db
+    restart: always
+    environment:
+      # Essas variáveis devem ser consistentes com seu .env para o usuário da API
+      MYSQL_ROOT_PASSWORD: sua_senha_root_segura # Senha usada APENAS para inicialização/ROOT
+      MYSQL_DATABASE: wallet_homolog
+    
+    # Mapeamento da porta (opcional, mas útil para acessar o BD fora do container)
+    ports:
+      - "3306:3306"
+      
+    # Criação de um volume persistente para que os dados do BD não se percam
+    volumes:
+      - wallet_db_data:/var/lib/mysql
+      
+    healthcheck:
+      test: ["CMD", "mysqladmin" ,"ping", "-h", "localhost", "-u", "root", "-p$$MYSQL_ROOT_PASSWORD"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Serviço da API (FastAPI)
+  api:
+    # Usa o Dockerfile_API que criamos
+    build:
+      context: .
+      dockerfile: dockerfile_api
+    container_name: wallet_api
+    restart: always
+    
+    # Mapeamento da porta para acessar a API no host (sua máquina)
+    ports:
+      - "8000:8000"
+      
+    # Depende do serviço 'db' estar saudável antes de tentar iniciar
+    depends_on:
+      db:
+        condition: service_healthy
+        
+    # Variáveis de ambiente
+    env_file:
+      - .env
+
+volumes: # <-- Definição global do volume
+  wallet_db_data:
+    driver: local

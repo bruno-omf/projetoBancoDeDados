@@ -1,0 +1,35 @@
+# Arquivos de Sistema Operacional (Pop!_OS/Linux e Windows/WSL)
+# Ignora arquivos de sistema comuns.
+*~
+.#*
+.DS_Store
+Thumbs.db
+
+# Ambiente Python (Virtual Environment)
+# O ambiente virtual nunca deve ser versionado.
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Dependências (Diretórios de Instalação)
+# Ignora pastas de dependências.
+pip-wheel-metadata/
+.tox/
+.mypy_cache/
+.pytest_cache/
+
+# Configuração Docker
+# As imagens são construídas a partir dos Dockerfiles.
+# Não é necessário ignorar os Dockerfiles ou o Compose.
+
+# Base de Dados (Volumes Persistentes)
+# O volume persistente (os dados brutos do MySQL) NÃO deve ir para o Git.
+# O Docker Compose gerencia isso localmente.
+wallet_db_data/
+*.sql.swp
+
+# SEGURANÇA E VARIÁVEIS DE AMBIENTE (PRIORIDADE MÁXIMA)
+# O .env contém senhas, chaves e credenciais. NUNCA suba para o repositório público.
+.env
