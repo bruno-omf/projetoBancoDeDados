@@ -3,7 +3,7 @@ from typing import List
 
 from api.services.carteira_service import CarteiraService
 from api.persistence.repositories.carteira_repository import CarteiraRepository
-from api.models.carteira_models import Carteira, CarteiraCriada
+from api.models.carteira_models import Carteira, CarteiraCriada, Saldo
 
 
 router = APIRouter(prefix="/carteiras", tags=["carteiras"])
@@ -53,3 +53,23 @@ def bloquear_carteira(
         return service.bloquear(endereco_carteira)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+        
+@router.get(
+    "/{endereco_carteira}/saldos", 
+    response_model=List[Saldo]
+)
+def buscar_saldos(
+    endereco_carteira: str,
+    service: CarteiraService = Depends(get_carteira_service),
+):
+    """
+    Retorna a lista de saldos (moeda e valor) para a carteira.
+    """
+    try:
+        return service.buscar_saldos(endereco_carteira)
+    except ValueError as e:
+        # Erro 404 se a carteira não for encontrada
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        # Outros erros de sistema/banco
+        raise HTTPException(status_code=500, detail=f"Erro ao buscar saldos: {str(e)}")
