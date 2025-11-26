@@ -3,7 +3,7 @@ from typing import List
 
 from api.services.carteira_service import CarteiraService
 from api.persistence.repositories.carteira_repository import CarteiraRepository
-from api.models.carteira_models import Carteira, CarteiraCriada, Saldo
+from api.models.carteira_models import Carteira, CarteiraCriada, Saldo, DepositoRequest, SaqueRequest
 
 
 router = APIRouter(prefix="/carteiras", tags=["carteiras"])
@@ -58,6 +58,59 @@ def bloquear_carteira(
     "/{endereco_carteira}/saldos", 
     response_model=List[Saldo]
 )
+
+# Endpoint: POST /carteiras/{endereco_carteira}/depositos
+@router.post("/{endereco_carteira}/depositos", status_code=200)
+def realizar_deposito(
+    endereco_carteira: str,
+    movimento: DepositoRequest,
+    service: CarteiraService = Depends(get_carteira_service),
+):
+    """
+    Registra um depósito na carteira (sem taxa).
+    Requisito: Valor creditado sem taxa.
+    """
+    try:
+        saldo_atualizado = service.depositar(
+            endereco_carteira=endereco_carteira,
+            valor=movimento.valor,
+            codigo_moeda=movimento.codigo_moeda
+        )
+        return {"mensagem": "Depósito realizado com sucesso.", "saldo_atualizado": saldo_atualizado}
+    except ValueError as e:
+        # Erro 400 se a carteira/moeda não for encontrada ou valor for inválido
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro ao realizar depósito: {str(e)}")
+
+
+# Endpoint: POST /carteiras/{endereco_carteira}/saques
+@router.post("/{endereco_carteira}/saques", status_code=200)
+def realizar_saque(
+    endereco_carteira: str,
+    movimento: SaqueRequest,
+    service: CarteiraService = Depends(get_carteira_service),
+):
+    """
+    Registra um saque na carteira (com taxa e validação de chave privada).
+    Requisito: Debita valor + taxa e validação obrigatória da chave privada (hash).
+    """
+    try:
+        saldo_atualizado = service.sacar(
+            endereco_carteira=endereco_carteira,
+            valor=movimento.valor,
+            codigo_moeda=movimento.codigo_moeda,
+            chave_privada=movimento.chave_privada
+        )
+        return {"mensagem": "Saque realizado com sucesso.", "saldo_atualizado": saldo_atualizado}
+    except ValueError as e:
+        # Erros 400/403/404 (saldo insuficiente, chave inválida, carteira não encontrada)
+        # 403 Forbidden é uma boa prática para falha de autenticação (chave privada inválida)
+        status_code = 403 if 'chave' in str(e).lower() else 400
+        raise HTTPException(status_code=status_code, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro ao realizar saque: {str(e)}")
+
 def buscar_saldos(
     endereco_carteira: str,
     service: CarteiraService = Depends(get_carteira_service),

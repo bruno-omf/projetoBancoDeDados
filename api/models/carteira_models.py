@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Literal, Optional
 from datetime import  datetime
 from pydantic import BaseModel
 from decimal import Decimal
@@ -17,3 +17,12 @@ class Saldo(BaseModel):
     nome_moeda: str
     saldo: Decimal
     data_atualizacao: datetime
+
+class DepositoRequest(BaseModel):
+    valor: Decimal
+    codigo_moeda: str
+
+class SaqueRequest(BaseModel):
+    valor: Decimal
+    codigo_moeda: str
+    chave_privada: str
