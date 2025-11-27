@@ -88,3 +88,31 @@ CREATE TABLE IF NOT EXISTS DEPOSITO_SAQUE (
 );
 
 CREATE INDEX idx_deposito_saque_carteira ON DEPOSITO_SAQUE(endereco_carteira);
+
+-- MINI-SPRINT 4: Criação da tabela de conversões
+CREATE TABLE IF NOT EXISTS CONVERSAO (
+    id_conversao BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    endereco_carteira VARCHAR(64) NOT NULL,
+    id_moeda_origem SMALLINT NOT NULL,
+    id_moeda_destino SMALLINT NOT NULL,
+    valor_origem DECIMAL(18,8) NOT NULL,
+    valor_destino DECIMAL(18,8) NOT NULL,
+    taxa_percentual DECIMAL(5,4) NOT NULL, -- Taxa percentual aplicada (ex: 0.02)
+    taxa_valor DECIMAL(18,8) NOT NULL, -- Valor real da taxa
+    cotacao_utilizada DECIMAL(18,8) NOT NULL, -- Cotação usada (Moeda Destino / Moeda Origem)
+    data_hora DATETIME NOT NULL,
+    
+    -- Chaves Estrangeiras
+    FOREIGN KEY (endereco_carteira) REFERENCES CARTEIRA(endereco_carteira)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    
+    FOREIGN KEY (id_moeda_origem) REFERENCES MOEDA(id_moeda)
+        ON DELETE RESTRICT ON UPDATE CASCADE,
+        
+    FOREIGN KEY (id_moeda_destino) REFERENCES MOEDA(id_moeda)
+        ON DELETE RESTRICT ON UPDATE CASCADE
+        
+    -- Regra de Negócio Crítica: Não se pode converter de uma moeda para ela mesma.
+    -- NÃO FUNCIONA DE JEITO ALGUM!!! JÁ TENTEI DE TUDO.
+    -- CONSTRAINT chk_moedas_diferentes CHECK (id_moeda_origem <> id_moeda_destino)
+);

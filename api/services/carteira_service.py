@@ -8,7 +8,10 @@ from typing import Dict, Any, Optional, List
 from datetime import datetime
 from decimal import Decimal
 
+import httpx
+
 from api.persistence.repositories.deposito_saque_repository import DepositoSaqueRepository
+from api.persistence.repositories.conversao_repository import ConversaoRepository
 from api.persistence.db import get_connection
 
 from api.persistence.repositories.carteira_repository import CarteiraRepository # Import completo
@@ -19,13 +22,19 @@ class CarteiraService:
     """
     Camada de serviço para regras de negócio e segurança da Carteira.
     """
-    def __init__(self, repository: CarteiraRepository, deposito_saque_repository: DepositoSaqueRepository):
+    def __init__(
+        self,
+        repository: CarteiraRepository,
+        deposito_saque_repository: DepositoSaqueRepository,
+        conversao_repository: ConversaoRepository
+    ):
         self._repository = repository
         self._deposito_saque_repository = deposito_saque_repository
+        self._conversao_repository = conversao_repository
         
         # Leitura das variáveis de ambiente (deve ser consistente com seu .env)
         self.TAXA_SAQUE_PERCENTUAL = Decimal(os.getenv("TAXA_SAQUE_PERCENTUAL", "0.01"))
-
+        self.TAXA_CONVERSAO_PERCENTUAL = Decimal(os.getenv("TAXA_CONVERSAO_PERCENTUAL", "0.02"))
         # Lendo configurações do .env para geração de chaves (Mini-Sprint 2)
         try:
             # PRIVATE_KEY_SIZE é usada em bytes no secrets.token_bytes
@@ -193,4 +202,137 @@ class CarteiraService:
             "valor_sacado": valor, 
             "taxa_cobrada": taxa_valor,
             "codigo_moeda": codigo_moeda
+        }
+
+    def get_cotacao_coinbase(self, base_currency: str, quote_currency: str) -> Decimal:
+        """
+        Busca a cotação MoedaDestino/MoedaOrigem na API pública da Coinbase.
+        A cotação é (Quote / Base), ex: BRL/USD.
+        """
+        pair = f"{base_currency}-{quote_currency}"
+        url = f"https://api.coinbase.com/v2/prices/{pair}/spot"
+        
+        try:
+            client = httpx.Client(timeout=5.0)
+            response = client.get(url)
+            
+            # 1. Checa por 404 antes de raise_for_status, para dar mensagem clara (ValueError)
+            if response.status_code == 404:
+                 raise ValueError(f"Par de moedas '{pair}' não suportado pela Coinbase.")
+                 
+            response.raise_for_status() # Lança HTTPStatusError para outros 4xx/5xx
+            data = response.json()
+            
+            # 2. Proteção contra JSON inesperado (KeyError ou TypeError)
+            try:
+                # Tenta acessar o valor aninhado e converter para Decimal
+                cotacao = Decimal(data['data']['amount'])
+            except (KeyError, TypeError, ValueError):
+                # Captura falha ao encontrar a chave ou ao converter. Gera 503/RuntimeError.
+                # A mensagem de erro agora inclui os dados recebidos para auxiliar na depuração futura
+                raise RuntimeError(f"Resposta da Coinbase com JSON inesperado para {pair}.") 
+            
+            return cotacao
+            
+        except httpx.HTTPStatusError as e:
+            # 3. Captura outros erros HTTP (e.g., 500 da Coinbase)
+            raise RuntimeError(f"Erro HTTP ao buscar cotação na Coinbase: {e.response.status_code} - {e}")
+        except ValueError:
+            # 4. Repassa ValueError (404)
+            raise
+        except Exception as e:
+            # 5. Captura erros de rede/conexão (httpx.RequestError)
+            raise RuntimeError(f"Falha na comunicação ou na requisição HTTP com a Coinbase: {e}")
+
+
+    def converter_moeda(
+            self,
+            endereco_carteira: str,
+            codigo_moeda_origem: str,
+            codigo_moeda_destino: str,
+            valor_origem: Decimal,
+            chave_privada: str,
+        ) -> Dict[str, Any]:
+        """
+        Processa a conversão de moeda: autenticação, cotação, cálculo (com taxa) e transação.
+        """
+        
+        # 1. Validação de moedas
+        id_moeda_origem = self._deposito_saque_repository.get_id_moeda(codigo_moeda_origem)
+        id_moeda_destino = self._deposito_saque_repository.get_id_moeda(codigo_moeda_destino)
+        
+        if not id_moeda_origem or not id_moeda_destino:
+            raise ValueError(f"Moeda não suportada na conversão.")
+        if codigo_moeda_origem == codigo_moeda_destino:
+            raise ValueError("Moedas de origem e destino devem ser diferentes.")
+
+        # 2. Busca da Cotação (FORA DA TRANSAÇÃO)
+        # É importante buscar a cotação antes de abrir a transação de banco.
+        cotacao_utilizada = self.get_cotacao_coinbase(
+            base_currency=codigo_moeda_origem, 
+            quote_currency=codigo_moeda_destino
+        )
+        
+        # 3. Lógica Transacional e Validação
+        # O context manager get_connection() gerencia a transação (COMMIT ou ROLLBACK)
+        with get_connection() as conn:
+            
+            # 3a. Autenticação (CRÍTICO: Conversão exige chave privada)
+            hash_privada_bd = self._deposito_saque_repository.buscar_hash_privada_ativo(endereco_carteira, conn)
+            if not hash_privada_bd:
+                raise ValueError("Carteira inexistente ou bloqueada.")
+            
+            hash_privada_requerida = hashlib.sha256(chave_privada.encode('utf-8')).hexdigest()
+            
+            if hash_privada_requerida != hash_privada_bd:
+                raise ValueError("Chave privada inválida para a conversão.")
+
+            # 3b. Cálculo Financeiro
+            taxa_percentual = self.TAXA_CONVERSAO_PERCENTUAL # Lida do .env (0.02)
+            
+            taxa_valor = valor_origem * taxa_percentual
+            
+            # Valor Líquido que será usado na conversão
+            valor_origem_liquido = valor_origem - taxa_valor
+            
+            # Valor final creditado na moeda de destino
+            valor_destino = valor_origem_liquido * cotacao_utilizada
+
+            # 3c. Checagem de Saldo
+            # O valor total debitado é o valor_origem (inclui a taxa)
+            saldo_atual = self._deposito_saque_repository.buscar_saldo_disponivel(
+                endereco_carteira=endereco_carteira,
+                id_moeda=id_moeda_origem,
+                conn=conn
+            )
+            
+            if saldo_atual < valor_origem:
+                raise ValueError(
+                    f"Saldo insuficiente na moeda {codigo_moeda_origem}. "
+                    f"Necessário {valor_origem:.8f} (incluindo taxa)."
+                )
+                
+            # 4. Registro e Atualização (Ação atômica)
+            self._conversao_repository.registrar_conversao_e_atualizar_saldos(
+                conn=conn,
+                endereco_carteira=endereco_carteira,
+                id_moeda_origem=id_moeda_origem,
+                id_moeda_destino=id_moeda_destino,
+                valor_origem=valor_origem,
+                valor_destino=valor_destino,
+                taxa_percentual=taxa_percentual,
+                taxa_valor=taxa_valor,
+                cotacao_utilizada=cotacao_utilizada,
+            )
+            
+        return {
+            "status": "sucesso", 
+            "endereco": endereco_carteira, 
+            "moeda_origem": codigo_moeda_origem, 
+            "moeda_destino": codigo_moeda_destino, 
+            "valor_origem": valor_origem,
+            "valor_destino_liquido": valor_destino,
+            "taxa_percentual": taxa_percentual,
+            "taxa_valor": taxa_valor,
+            "cotacao_utilizada": cotacao_utilizada,
         }

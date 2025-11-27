@@ -33,3 +33,10 @@ class RequisicaoSaque(MovimentoBase):
     """Dados necessários para realizar um Saque."""
     chave_privada: str = Field(min_length=32, max_length=64, description="Chave privada para autenticação do Saque.")
     # Saques exigem validação da chave privada
+
+class RequisicaoConversao(BaseModel):
+    """Dados necessários para realizar uma Conversão."""
+    codigo_moeda_origem: str = Field(description="Código da moeda a ser debitada (ex: BTC, USD)")
+    codigo_moeda_destino: str = Field(description="Código da moeda a ser creditada (ex: ETH, BRL)")
+    valor_origem: Decimal = Field(gt=0, decimal_places=8, description="Valor na moeda de origem a ser convertido. Deve ser maior que zero.")
+    chave_privada: str = Field(min_length=32, max_length=64, description="Chave privada para autenticação da Conversão.")

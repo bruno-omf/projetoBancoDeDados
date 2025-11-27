@@ -6,8 +6,16 @@ from typing import List
 from api.services.carteira_service import CarteiraService
 from api.persistence.repositories.carteira_repository import CarteiraRepository
 # Importar os Models de Requisição e Resposta (RequisicaoSaque é essencial)
-from api.models.carteira_models import Carteira, CarteiraCriada, Saldo, RequisicaoDeposito, RequisicaoSaque 
+from api.models.carteira_models import (
+    Carteira,
+    CarteiraCriada,
+    Saldo,
+    RequisicaoDeposito,
+    RequisicaoSaque,
+    RequisicaoConversao,
+)
 from api.persistence.repositories.deposito_saque_repository import DepositoSaqueRepository
+from api.persistence.repositories.conversao_repository import ConversaoRepository
 
 router = APIRouter(prefix="/carteiras", tags=["carteiras"])
 
@@ -16,13 +24,15 @@ def get_carteira_service() -> CarteiraService:
     # CRÍTICO: Passar os dois repositórios
     carteira_repo = CarteiraRepository()
     deposito_saque_repo = DepositoSaqueRepository()
-    return CarteiraService(carteira_repo, deposito_saque_repo)
+    conversao_repo = ConversaoRepository()
+
+    return CarteiraService(carteira_repo, deposito_saque_repo, conversao_repo)
 
 
 @router.post("", response_model=CarteiraCriada, status_code=201)
 def criar_carteira(
     service: CarteiraService = Depends(get_carteira_service),
-)->CarteiraCriada:
+) -> CarteiraCriada:
     """
     Cria uma nova carteira. O body é opcional .
     Retorna endereço e chave privada (apenas nesta resposta).
@@ -58,11 +68,9 @@ def bloquear_carteira(
         return service.bloquear(endereco_carteira)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
-        
-@router.get(
-    "/{endereco_carteira}/saldos", 
-    response_model=List[Saldo]
-)
+
+
+@router.get("/{endereco_carteira}/saldos", response_model=List[Saldo])
 def buscar_saldos(
     endereco_carteira: str,
     service: CarteiraService = Depends(get_carteira_service),
@@ -91,12 +99,12 @@ def realizar_deposito(
         return service.depositar(
             endereco_carteira=endereco_carteira,
             codigo_moeda=requisicao.codigo_moeda,
-            valor=requisicao.valor
+            valor=requisicao.valor,
         )
     except ValueError as e:
         # Erros como Carteira inexistente ou Moeda não suportada
         raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
+    except Exception:
         # Erro genérico (DB ou lógica não capturada)
         raise HTTPException(status_code=500, detail="Erro interno ao processar depósito.")
 
@@ -115,11 +123,40 @@ def realizar_saque(
             endereco_carteira=endereco_carteira,
             codigo_moeda=requisicao.codigo_moeda,
             valor=requisicao.valor,
-            chave_privada=requisicao.chave_privada
+            chave_privada=requisicao.chave_privada,
         )
     except ValueError as e:
         # Erros como Saldo Insuficiente, Chave Inválida, Carteira Inexistente
         raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
+    except Exception:
         # Erro genérico (DB ou lógica não capturada)
         raise HTTPException(status_code=500, detail="Erro interno ao processar saque.")
+
+
+@router.post("/{endereco_carteira}/conversoes", status_code=200)
+def realizar_conversao(
+    endereco_carteira: str,
+    requisicao: RequisicaoConversao,
+    service: CarteiraService = Depends(get_carteira_service),
+):
+    """
+    Realiza a conversão de fundos entre duas moedas.
+    Exige chave privada da carteira, busca cotação na Coinbase e aplica taxa.
+    """
+    try:
+        return service.converter_moeda(
+            endereco_carteira=endereco_carteira,
+            codigo_moeda_origem=requisicao.codigo_moeda_origem,
+            codigo_moeda_destino=requisicao.codigo_moeda_destino,
+            valor_origem=requisicao.valor_origem,
+            chave_privada=requisicao.chave_privada,
+        )
+    except ValueError as e:
+        # Erros 400: Saldo Insuficiente, Chave Inválida, Moeda Não Suportada (Coinbase)
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        # Erros 503: Falha de comunicação com a Coinbase
+        raise HTTPException(status_code=503, detail=str(e))
+    except Exception:
+        # Erro genérico
+        raise HTTPException(status_code=500, detail="Erro interno ao processar conversão.")
