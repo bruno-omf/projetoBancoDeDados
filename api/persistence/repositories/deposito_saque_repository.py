@@ -27,15 +27,16 @@ class DepositoSaqueRepository:
             result = conn.execute(query, {"endereco": endereco_carteira}).fetchone()
             return result is not None
 
-    def buscar_hash_privada_ativo(self, endereco_carteira: str, conn: Connection) -> str | None:
+    def buscar_hash_privada_ativo(self, endereco_carteira: str) -> str | None:
         """Busca o hash da chave privada de uma carteira ATIVA."""
         query = text("""
             SELECT hash_chave_privada
             FROM CARTEIRA
             WHERE endereco_carteira = :endereco AND status = 'ATIVA'
         """)
-        result = conn.execute(query, {"endereco": endereco_carteira}).fetchone()
-        return result[0] if result else None
+        with get_connection() as conn:
+            result = conn.execute(query, {"endereco": endereco_carteira}).fetchone()
+            return result[0] if result else None
 
     # MÉTODO 3: registrar_movimento_e_atualizar_saldo
     def registrar_movimento_e_atualizar_saldo(

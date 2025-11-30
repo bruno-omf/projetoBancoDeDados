@@ -116,3 +116,28 @@ CREATE TABLE IF NOT EXISTS CONVERSAO (
     -- NÃO FUNCIONA DE JEITO ALGUM!!! JÁ TENTEI DE TUDO.
     -- CONSTRAINT chk_moedas_diferentes CHECK (id_moeda_origem <> id_moeda_destino)
 );
+
+
+-- Mini-Sprint 5: Criação da tabela de trasferências
+
+CREATE TABLE IF NOT EXISTS TRANSFERENCIA (
+    id_transferencia BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    endereco_origem VARCHAR(64) NOT NULL,
+    endereco_destino VARCHAR(64) NOT NULL,
+    id_moeda SMALLINT NOT NULL,
+    valor DECIMAL(18,8) NOT NULL,
+    taxa_valor DECIMAL(18,8) NOT NULL,
+    data_hora DATETIME NOT NULL,
+
+    FOREIGN KEY (endereco_origem) REFERENCES CARTEIRA(endereco_carteira)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    
+    FOREIGN KEY (endereco_destino) REFERENCES CARTEIRA(endereco_carteira)
+        ON DELETE CASCADE ON UPDATE CASCADE,
+    
+    FOREIGN KEY (id_moeda) REFERENCES MOEDA(id_moeda)
+        ON DELETE RESTRICT ON UPDATE CASCADE
+);
+
+CREATE INDEX idx_transferencia_origem ON TRANSFERENCIA(endereco_origem);
+CREATE INDEX idx_transferencia_destino ON TRANSFERENCIA(endereco_destino);

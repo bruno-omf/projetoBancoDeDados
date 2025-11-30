@@ -40,3 +40,10 @@ class RequisicaoConversao(BaseModel):
     codigo_moeda_destino: str = Field(description="Código da moeda a ser creditada (ex: ETH, BRL)")
     valor_origem: Decimal = Field(gt=0, decimal_places=8, description="Valor na moeda de origem a ser convertido. Deve ser maior que zero.")
     chave_privada: str = Field(min_length=32, max_length=64, description="Chave privada para autenticação da Conversão.")
+
+class RequisicaoTransferencia(BaseModel):
+    """Dados necessários para realizar uma Transferência."""
+    codigo_moeda: str = Field(description="Código da moeda a ser transferida (ex: BTC, USD)")
+    valor: Decimal = Field(gt=0, decimal_places=8, description="Valor a ser transferido. Deve ser maior que zero.")
+    endereco_destino: str = Field(description="Endereço da carteira destino para a transferência.")
+    chave_privada: str = Field(min_length=32, max_length=64, description="Chave privada para autenticação da Transferência.")

@@ -10,6 +10,7 @@ from decimal import Decimal
 
 import httpx
 
+from api.persistence.repositories.transferencia_repository import TransferenciaRepository
 from api.persistence.repositories.deposito_saque_repository import DepositoSaqueRepository
 from api.persistence.repositories.conversao_repository import ConversaoRepository
 from api.persistence.db import get_connection
@@ -26,15 +27,18 @@ class CarteiraService:
         self,
         repository: CarteiraRepository,
         deposito_saque_repository: DepositoSaqueRepository,
-        conversao_repository: ConversaoRepository
+        conversao_repository: ConversaoRepository,
+        transferencia_repository: TransferenciaRepository
     ):
         self._repository = repository
         self._deposito_saque_repository = deposito_saque_repository
         self._conversao_repository = conversao_repository
+        self._transferencia_repository = transferencia_repository
         
         # Leitura das variáveis de ambiente (deve ser consistente com seu .env)
         self.TAXA_SAQUE_PERCENTUAL = Decimal(os.getenv("TAXA_SAQUE_PERCENTUAL", "0.01"))
         self.TAXA_CONVERSAO_PERCENTUAL = Decimal(os.getenv("TAXA_CONVERSAO_PERCENTUAL", "0.02"))
+        self.TAXA_TRANSFERENCIA_PERCENTUAL = Decimal(os.getenv("TAXA_TRANSFERENCIA_PERCENTUAL", "0.01"))
         # Lendo configurações do .env para geração de chaves (Mini-Sprint 2)
         try:
             # PRIVATE_KEY_SIZE é usada em bytes no secrets.token_bytes
@@ -156,8 +160,8 @@ class CarteiraService:
             
             # 3a. Validação de Chave Privada
             hash_chave_armazenada = self._deposito_saque_repository.buscar_hash_privada_ativo(
-                endereco_carteira=endereco_carteira,
-                conn=conn # Requer a conexão da transação
+                endereco_carteira=endereco_carteira
+                # conn=conn # Requer a conexão da transação
             )
             
             # Gera o hash da chave fornecida pelo usuário
@@ -278,7 +282,7 @@ class CarteiraService:
         with get_connection() as conn:
             
             # 3a. Autenticação (CRÍTICO: Conversão exige chave privada)
-            hash_privada_bd = self._deposito_saque_repository.buscar_hash_privada_ativo(endereco_carteira, conn)
+            hash_privada_bd = self._deposito_saque_repository.buscar_hash_privada_ativo(endereco_carteira)
             if not hash_privada_bd:
                 raise ValueError("Carteira inexistente ou bloqueada.")
             
@@ -335,4 +339,93 @@ class CarteiraService:
             "taxa_percentual": taxa_percentual,
             "taxa_valor": taxa_valor,
             "cotacao_utilizada": cotacao_utilizada,
+        }
+
+    def transferir_moeda(
+        self,
+        endereco_origem: str,
+        endereco_destino: str,
+        codigo_moeda: str,
+        valor_transferencia: Decimal,
+        chave_privada: str,
+    ) -> Dict[str, Any]:
+        """
+        Realiza a transferência de fundos entre duas carteiras internas.
+        Debita origem (com taxa), credita destino (sem taxa).
+        """
+        # 1. Verifica se as carteiras são a mesma
+        if endereco_origem == endereco_destino:
+            raise ValueError("A carteira de origem e destino não podem ser a mesma.")
+
+        # 2. Busca o ID da Moeda
+        id_moeda = self._deposito_saque_repository.get_id_moeda(codigo_moeda)
+        if id_moeda is None:
+            raise ValueError(f"Moeda não suportada: {codigo_moeda}")
+
+        # 3. Verifica a existência e status das carteiras (ambas ATIVAS)
+        if not self._deposito_saque_repository.verifica_carteira_existe(endereco_origem):
+            raise ValueError(f"Carteira de origem não encontrada ou inativa: {endereco_origem}")
+            
+        if not self._deposito_saque_repository.verifica_carteira_existe(endereco_destino):
+            raise ValueError(f"Carteira de destino não encontrada ou inativa: {endereco_destino}")
+
+        # 4. Validação da Chave Privada da Origem
+        hash_privada_bd = self._deposito_saque_repository.buscar_hash_privada_ativo(endereco_origem)
+        if hash_privada_bd is None:
+            raise ValueError("Chave privada não encontrada para a carteira de origem ou carteira inativa.")
+
+        # Gerar o hash da chave fornecida pelo usuário para comparação
+        hash_fornecido = hashlib.sha256(chave_privada.encode('utf-8')).hexdigest()
+
+        if hash_fornecido != hash_privada_bd:
+            raise ValueError("Chave privada de origem inválida.")
+
+        # 5. Cálculo da Taxa e do Valor Líquido
+        # Valor total debitado = Valor Transferência (líquido) + Taxa
+        
+        # Regra de Negócio: A taxa é sobre o valor que SAI da carteira (Origem)
+        taxa_percentual = self.TAXA_TRANSFERENCIA_PERCENTUAL
+        taxa_valor = valor_transferencia * taxa_percentual
+        
+        valor_total_debito = valor_transferencia + taxa_valor
+        valor_liquido_destino = valor_transferencia # Destino recebe o valor "limpo" (valor_transferencia)
+
+
+        # 6. Inicia a transação e verifica saldo.
+        # Usa o context manager get_connection() para garantir atomicidade.
+        with get_connection() as conn:
+            
+            # 6.1. Verifica Saldo da Origem (Usando a conexão da transação)
+            saldo_atual = self._deposito_saque_repository.buscar_saldo_disponivel(
+                endereco_carteira=endereco_origem,
+                id_moeda=id_moeda,
+                conn=conn
+            )
+            
+            if saldo_atual < valor_total_debito:
+                raise ValueError(
+                    f"Saldo insuficiente na moeda {codigo_moeda}. "
+                    f"Necessário {valor_total_debito:.8f} (incluindo taxa)."
+                )
+                
+            # 6.2. Registro e Atualização (Ação atômica)
+            self._transferencia_repository.registrar_transferencia_e_atualizar_saldos(
+                conn=conn,
+                endereco_origem=endereco_origem,
+                endereco_destino=endereco_destino,
+                id_moeda=id_moeda,
+                valor_transferido=valor_total_debito, # Valor que sai da origem
+                valor_liquido_destino=valor_liquido_destino, # Valor que entra no destino
+                taxa_valor=taxa_valor,
+            )
+            
+        return {
+            "status": "sucesso",
+            "origem": endereco_origem,
+            "destino": endereco_destino,
+            "moeda": codigo_moeda,
+            "valor_transferido": valor_transferencia, # Valor líquido
+            "valor_total_debitado_origem": valor_total_debito,
+            "taxa_percentual": taxa_percentual,
+            "taxa_valor": taxa_valor,
         }

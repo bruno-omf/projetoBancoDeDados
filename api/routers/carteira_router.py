@@ -5,6 +5,9 @@ from typing import List
 
 from api.services.carteira_service import CarteiraService
 from api.persistence.repositories.carteira_repository import CarteiraRepository
+from api.persistence.repositories.deposito_saque_repository import DepositoSaqueRepository
+from api.persistence.repositories.conversao_repository import ConversaoRepository
+from api.persistence.repositories.transferencia_repository import TransferenciaRepository
 # Importar os Models de Requisição e Resposta (RequisicaoSaque é essencial)
 from api.models.carteira_models import (
     Carteira,
@@ -13,9 +16,9 @@ from api.models.carteira_models import (
     RequisicaoDeposito,
     RequisicaoSaque,
     RequisicaoConversao,
+    RequisicaoTransferencia
 )
-from api.persistence.repositories.deposito_saque_repository import DepositoSaqueRepository
-from api.persistence.repositories.conversao_repository import ConversaoRepository
+
 
 router = APIRouter(prefix="/carteiras", tags=["carteiras"])
 
@@ -25,8 +28,9 @@ def get_carteira_service() -> CarteiraService:
     carteira_repo = CarteiraRepository()
     deposito_saque_repo = DepositoSaqueRepository()
     conversao_repo = ConversaoRepository()
+    transferencia_repo = TransferenciaRepository()
 
-    return CarteiraService(carteira_repo, deposito_saque_repo, conversao_repo)
+    return CarteiraService(carteira_repo, deposito_saque_repo, conversao_repo, transferencia_repo)
 
 
 @router.post("", response_model=CarteiraCriada, status_code=201)
@@ -130,7 +134,8 @@ def realizar_saque(
         raise HTTPException(status_code=400, detail=str(e))
     except Exception:
         # Erro genérico (DB ou lógica não capturada)
-        raise HTTPException(status_code=500, detail="Erro interno ao processar saque.")
+        raise HTTPException(status_code=500, detail=f"Erro interno ao processar: {type(e).__name__} - {str(e)}")
+        # Antes: raise HTTPException(status_code=500, detail="Erro interno ao processar saque.")
 
 
 @router.post("/{endereco_carteira}/conversoes", status_code=200)
@@ -157,6 +162,31 @@ def realizar_conversao(
     except RuntimeError as e:
         # Erros 503: Falha de comunicação com a Coinbase
         raise HTTPException(status_code=503, detail=str(e))
-    except Exception:
-        # Erro genérico
-        raise HTTPException(status_code=500, detail="Erro interno ao processar conversão.")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro interno ao processar: {type(e).__name__} - {str(e)}")
+        # Antes: raise HTTPException(status_code=500, detail="Erro interno ao processar saque.")
+
+@router.post("/{endereco_origem}/transferencias", status_code=200)
+def realizar_transferencia(
+    endereco_origem: str,
+    requisicao: RequisicaoTransferencia,
+    service: CarteiraService = Depends(get_carteira_service),
+):
+    """
+    Realiza a transferência de fundos entre duas carteiras.
+    Exige chave privada da carteira de origem, debita com taxa e credita destino sem taxa.
+    """
+    try:
+        return service.transferir_moeda(
+            endereco_origem=endereco_origem,
+            endereco_destino=requisicao.endereco_destino,
+            codigo_moeda=requisicao.codigo_moeda,
+            valor_transferencia=requisicao.valor,
+            chave_privada=requisicao.chave_privada,
+        )
+    except ValueError as e:
+        # Erros 400: Saldo Insuficiente, Chave Inválida, Carteira Inexistente, Moeda Não Suportada.
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        # Erro genérico (DB ou lógica não capturada)
+        raise HTTPException(status_code=500, detail=f"Erro interno ao processar transferência: {str(e)}")
