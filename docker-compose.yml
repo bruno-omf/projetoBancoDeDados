@@ -1,22 +1,20 @@
 services:
   # Serviço do Banco de Dados
   wallet_db:
-    # Usa o Dockerfile_DB que criamos
-    build:
-      context: .
-      dockerfile: dockerfile_db
+    # AQUI: Usando a imagem final do Docker Hub
+    image: brunodmff/projetobancodedadosdb:latest
     container_name: wallet_db
     restart: always
     environment:
-      # Essas variáveis devem ser consistentes com seu .env para o usuário da API
-      MYSQL_ROOT_PASSWORD: sua_senha_root_segura # Senha usada APENAS para inicialização/ROOT
+      # Variáveis usadas para a inicialização do container (não são os credenciais da API)
+      MYSQL_ROOT_PASSWORD: sua_senha_root_segura
       MYSQL_DATABASE: wallet_homolog
     
-    # Mapeamento da porta (opcional, mas útil para acessar o BD fora do container)
+    # Mapeamento da porta (opcional, mas útil para acesso direto)
     ports:
       - "3306:3306"
       
-    # Criação de um volume persistente para que os dados do BD não se percam
+    # CRÍTICO: Volume persistente para manter os dados após o down/up
     volumes:
       - wallet_db_data:/var/lib/mysql
       
@@ -28,23 +26,21 @@ services:
 
   # Serviço da API (FastAPI)
   wallet_api:
-    # Usa o Dockerfile_API que criamos
-    build:
-      context: .
-      dockerfile: dockerfile_api
+    # AQUI: Usando a imagem final do Docker Hub
+    image: brunodmff/projetobancodedadosapi:latest
     container_name: wallet_api
     restart: always
     
-    # Mapeamento da porta para acessar a API no host (sua máquina)
+    # Mapeamento da porta para acesso à API no host
     ports:
       - "8000:8000"
       
-    # Depende do serviço 'db' estar saudável antes de tentar iniciar
+    # Garante que o DB esteja pronto e saudável antes de tentar subir a API
     depends_on:
       wallet_db:
         condition: service_healthy
         
-    # Variáveis de ambiente
+    # Variáveis de ambiente (incluem DB_HOST=wallet_db e credenciais da API)
     env_file:
       - .env
 
