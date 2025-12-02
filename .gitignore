@@ -32,4 +32,4 @@ wallet_db_data/
 
 # SEGURANÇA E VARIÁVEIS DE AMBIENTE (PRIORIDADE MÁXIMA)
 # O .env contém senhas, chaves e credenciais. NUNCA suba para o repositório público.
-.env
+#.env
